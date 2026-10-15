@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; form-action https://kite.zerodha.com; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<title>Swing Order Ticket</title>
+<style>
+/* Layout: one narrow order slip; each order is a perforated stub with a BUY or SELL stamp; the send bar sits under the stubs. */
+:root {
+  --paper: #f6f7f4;
+  --slip: #ffffff;
+  --ink: #1c2421;
+  --ink-soft: #5b6662;
+  --rule: #cfd6d2;
+  --buy: #17694a;
+  --sell: #a33a2c;
+  --accent: #23466e;
+  --accent-ink: #ffffff;
+  --warn: #8a5a00;
+  --warn-bg: #fff4dc;
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-num: ui-monospace, "SFMono-Regular", "Cascadia Mono", Menlo, Consolas, monospace;
+  --font-head: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #121715; --slip: #1a211e; --ink: #e6ece9; --ink-soft: #9aa7a2; --rule: #33403b;
+    --buy: #5cc597; --sell: #ef8a7a; --accent: #8db4e2; --accent-ink: #0d1a29; --warn: #f2c46b; --warn-bg: #2d2412;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #121715; --slip: #1a211e; --ink: #e6ece9; --ink-soft: #9aa7a2; --rule: #33403b;
+  --buy: #5cc597; --sell: #ef8a7a; --accent: #8db4e2; --accent-ink: #0d1a29; --warn: #f2c46b; --warn-bg: #2d2412;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.5 var(--font-ui);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: max(20px, env(safe-area-inset-top, 0px)) max(28px, env(safe-area-inset-bottom, 0px));
+}
+.wrap { max-width: 34rem; margin-inline: auto; display: flex; flex-direction: column; gap: 18px; }
+header { display: flex; flex-direction: column; gap: 4px; }
+h1 { font: 400 1.75rem/1.15 var(--font-head); margin: 0; text-wrap: balance; }
+.sub { color: var(--ink-soft); margin: 0; }
+.label { font: 600 0.7rem/1.2 var(--font-num); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); }
+.notice { border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; background: var(--slip); }
+.notice.warn { border-color: var(--warn); background: var(--warn-bg); color: var(--ink); }
+.notice.ok { border-color: var(--buy); }
+.notice p { margin: 0; }
+.stubs { display: flex; flex-direction: column; gap: 12px; }
+.stub { background: var(--slip); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+.stub-top { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px dashed var(--rule); }
+.stamp { font: 700 0.75rem/1 var(--font-num); letter-spacing: 0.1em; padding: 6px 8px; border: 2px solid currentColor; border-radius: 4px; transform: rotate(-3deg); }
+.stamp.buy { color: var(--buy); }
+.stamp.sell { color: var(--sell); }
+.who { min-width: 0; flex: 1; }
+.sym { font: 700 1.05rem/1.2 var(--font-num); }
+.name { color: var(--ink-soft); font-size: 0.85rem; overflow-wrap: anywhere; }
+.inc { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--ink-soft); white-space: nowrap; }
+.inc input { width: 18px; height: 18px; accent-color: var(--accent); }
+.rows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; padding: 12px 14px; }
+.row { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.val { font: 500 0.95rem/1.3 var(--font-num); font-variant-numeric: tabular-nums; }
+.why { padding: 0 14px 12px; margin: 0; color: var(--ink-soft); font-size: 0.85rem; }
+.stub.off { opacity: 0.55; }
+.total { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 0 2px; }
+.total .val { font-size: 1.05rem; }
+button, .btn {
+  font: 600 0.95rem/1 var(--font-ui); border-radius: 8px; padding: 12px 16px; cursor: pointer; border: 1px solid var(--accent);
+}
+.primary { background: var(--accent); color: var(--accent-ink); width: 100%; }
+.primary:disabled { opacity: 0.45; cursor: not-allowed; }
+.quiet { background: transparent; color: var(--accent); padding: 8px 12px; }
+button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.send { display: flex; flex-direction: column; gap: 8px; }
+.send p { margin: 0; font-size: 0.85rem; color: var(--ink-soft); }
+.keybox { background: var(--slip); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.keybox p { margin: 0; font-size: 0.85rem; color: var(--ink-soft); }
+.keyrow { display: flex; flex-wrap: wrap; gap: 8px; }
+.keyrow input { flex: 1 1 12rem; min-width: 0; font: 500 0.95rem/1.2 var(--font-num); padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); color: var(--ink); }
+.addr { font: 0.8rem/1.4 var(--font-num); overflow-wrap: anywhere; user-select: all; color: var(--ink); }
+.saved { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+footer { font-size: 0.8rem; color: var(--ink-soft); }
+footer p { margin: 0; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header>
+    <span class="label">Order ticket</span>
+    <h1 id="title">Swing order ticket</h1>
+    <p class="sub" id="sub">No orders loaded yet.</p>
+  </header>
+
+  <div id="back" class="notice ok" hidden><p id="back-text"></p></div>
+  <div id="timing" class="notice" hidden><p id="timing-text"></p></div>
+  <div id="stale" class="notice warn" hidden><p id="stale-text"></p></div>
+  <div id="empty" class="notice" hidden><p id="empty-text">Open this page from a Buy in Kite link in your morning message or on your dashboard. The link carries the day's orders.</p></div>
+
+  <section class="stubs" id="stubs" aria-label="Orders"></section>
+
+  <div class="total" id="total-row" hidden>
+    <span class="label">Total, about</span>
+    <span class="val" id="total">—</span>
+  </div>
+
+  <section class="keybox" id="keybox" aria-labelledby="key-h">
+    <span class="label" id="key-h">Kite app key</span>
+    <div id="key-saved" class="saved" hidden>
+      <span>Saved on this device: <span class="val" id="key-mask"></span></span>
+      <button type="button" class="quiet" id="key-change">Change</button>
+    </div>
+    <form id="key-form" class="keyrow" autocomplete="off">
+      <input id="key-input" name="key" inputmode="text" spellcheck="false" autocapitalize="off" placeholder="API key from developers.kite.trade" aria-label="Kite API key">
+      <button type="submit" class="quiet" id="key-save">Save on this device</button>
+    </form>
+    <p id="key-help">Create a free Publisher app at developers.kite.trade, set its redirect URL to this page's address, and paste the app's API key here. It stays in this browser only; this page sends it nowhere but Kite.</p>
+    <p>This page's address: <span class="addr" id="addr"></span></p>
+    <p id="key-msg" hidden></p>
+  </section>
+
+  <section class="send">
+    <button type="button" class="primary" id="send" disabled>Send to Kite</button>
+    <p id="send-note">Kite opens with these orders filled in. Check them and place them there; nothing is placed until you confirm in Kite.</p>
+  </section>
+
+  <footer>
+    <p>Your own helper page for the swing picks. Prices are limit prices; quantities follow your ₹50,000-a-stock cap, and you can change both in Kite before placing.</p>
+  </footer>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  var KEY_STORE = 'swingTicket.kiteApiKey';
+  var KITE_BASKET = 'https://kite.zerodha.com/connect/basket';
+  var $ = function (id) { return document.getElementById(id); };
+  var store = {
+    get: function () { try { return localStorage.getItem(KEY_STORE) || ''; } catch (e) { return ''; } },
+    set: function (v) { try { localStorage.setItem(KEY_STORE, v); return true; } catch (e) { return false; } },
+    clear: function () { try { localStorage.removeItem(KEY_STORE); } catch (e) {} }
+  };
+  var memKey = '';
+  function getKey() { return store.get() || memKey; }
+
+  function inr(x, digits) {
+    return '₹' + Number(x).toLocaleString('en-IN', {minimumFractionDigits: digits, maximumFractionDigits: digits});
+  }
+  function istNow(ms) {
+    var d = new Date(ms + 330 * 60000);
+    return {iso: d.toISOString().slice(0, 10), dow: d.getUTCDay(), min: d.getUTCHours() * 60 + d.getUTCMinutes()};
+  }
+  function dayLabel(iso) {
+    var p = iso.split('-').map(Number), d = new Date(Date.UTC(p[0], p[1] - 1, p[2]));
+    return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()] + ' ' + d.getUTCDate() + ' ' +
+      ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getUTCMonth()];
+  }
+  // When Kite takes which kind of order (NSE equity, IST): AMO 4:00 PM to 8:58 AM, regular 9:00 AM to 3:30 PM.
+  function session(ms) {
+    var t = istNow(ms);
+    if (t.dow === 0 || t.dow === 6 || t.min >= 960 || t.min < 538) {
+      return {variety: 'amo', text: 'Market closed: Kite will queue these as after-market orders (AMO) for the next open at 9:15 AM.'};
+    }
+    if (t.min < 540) return {variety: null, text: "Kite doesn't take orders between 8:58 and 9:00 AM. Send them at 9:00 AM."};
+    if (t.min < 930) return {variety: 'regular', text: 'Market open: these go in as regular orders.'};
+    return {variety: null, text: 'Kite takes after-market orders again from 4:00 PM.'};
+  }
+  function b64urlToText(s) {
+    s = s.replace(/-/g, '+').replace(/_/g, '/');
+    while (s.length % 4) s += '=';
+    var bin = atob(s), bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  }
+  // The link's data is untrusted: accept only well-formed orders.
+  function readTicket(hash) {
+    if (!hash || hash.length < 2) return {orders: null};
+    var raw = hash.slice(1);
+    if (raw.slice(0, 3) !== 'v1.') return {error: true};
+    var obj;
+    try { obj = JSON.parse(b64urlToText(raw.slice(3))); } catch (e) { return {error: true}; }
+    if (!obj || typeof obj !== 'object' || !Array.isArray(obj.o) || !/^\d{4}-\d{2}-\d{2}$/.test(String(obj.d || ''))) return {error: true};
+    var orders = [];
+    for (var i = 0; i < obj.o.length && orders.length < 10; i++) {
+      var o = obj.o[i] || {};
+      var side = o.t === 'S' ? 'SELL' : o.t === 'B' ? 'BUY' : null;
+      var sym = String(o.s || '');
+      var q = Number(o.q), p = Number(o.p);
+      if (!side || !/^[A-Z0-9&-]{1,20}$/.test(sym) || !Number.isInteger(q) || q < 1 || q > 100000 ||
+          !(p > 0 && p < 1000000) || Math.round(p * 100) !== Math.round(p * 100 * 1000) / 1000) return {error: true};
+      orders.push({side: side, symbol: sym, name: String(o.n || '').slice(0, 80), qty: q, price: Math.round(p * 100) / 100,
+                   why: String(o.w || '').slice(0, 200), on: true});
+    }
+    return {day: obj.d, orders: orders};
+  }
+
+  var ticket = readTicket(location.hash);
+  var orders = ticket.orders || [];
+
+  // Back from Kite: show what it said, then drop the query string (it can carry a one-time token this page never uses).
+  var qs = new URLSearchParams(location.search);
+  if (qs.has('status')) {
+    var st = qs.get('status');
+    $('back-text').textContent = st === 'success'
+      ? 'Back from Kite. It reported success: check the Orders tab in Kite to see what was placed.'
+      : 'Back from Kite with status "' + st + '". Check the Orders tab in Kite to see whether anything was placed.';
+    $('back').hidden = false;
+    try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) {}
+  }
+
+  $('addr').textContent = location.origin + location.pathname;
+
+  function render() {
+    var stubs = $('stubs');
+    stubs.textContent = '';
+    if (ticket.error) {
+      $('empty-text').textContent = "This link's orders couldn't be read. Open the link again from the morning message or the dashboard.";
+    }
+    $('empty').hidden = orders.length > 0;
+    if (orders.length) {
+      var buys = orders.filter(function (o) { return o.side === 'BUY'; }).length;
+      $('sub').textContent = 'Orders for ' + dayLabel(ticket.day) + ' · ' + orders.length + ' order' + (orders.length > 1 ? 's' : '') +
+        (buys && buys < orders.length ? ' (' + buys + ' buy, ' + (orders.length - buys) + ' sell)' : '');
+    }
+    orders.forEach(function (o, i) {
+      var stub = document.createElement('article');
+      stub.className = 'stub' + (o.on ? '' : ' off');
+      var top = document.createElement('div'); top.className = 'stub-top';
+      var stamp = document.createElement('span'); stamp.className = 'stamp ' + o.side.toLowerCase(); stamp.textContent = o.side;
+      var who = document.createElement('div'); who.className = 'who';
+      var sym = document.createElement('div'); sym.className = 'sym'; sym.textContent = o.symbol;
+      var name = document.createElement('div'); name.className = 'name'; name.textContent = o.name ? o.name + ' · NSE' : 'NSE';
+      who.appendChild(sym); who.appendChild(name);
+      var inc = document.createElement('label'); inc.className = 'inc';
+      var box = document.createElement('input'); box.type = 'checkbox'; box.checked = o.on; box.id = 'inc-' + i;
+      box.addEventListener('change', function () { o.on = box.checked; render(); });
+      inc.appendChild(box); inc.appendChild(document.createTextNode('Include'));
+      top.appendChild(stamp); top.appendChild(who); top.appendChild(inc);
+      var rows = document.createElement('div'); rows.className = 'rows';
+      [['Quantity', o.qty.toLocaleString('en-IN') + ' shares'], ['Limit price', inr(o.price, 2)],
+       ['Product', 'CNC (delivery)'], ['Amount, about', inr(o.qty * o.price, 0)]].forEach(function (kv) {
+        var r = document.createElement('div'); r.className = 'row';
+        var l = document.createElement('span'); l.className = 'label'; l.textContent = kv[0];
+        var v = document.createElement('span'); v.className = 'val'; v.textContent = kv[1];
+        r.appendChild(l); r.appendChild(v); rows.appendChild(r);
+      });
+      stub.appendChild(top); stub.appendChild(rows);
+      if (o.why) { var w = document.createElement('p'); w.className = 'why'; w.textContent = o.why; stub.appendChild(w); }
+      stubs.appendChild(stub);
+    });
+    var on = orders.filter(function (o) { return o.on; });
+    $('total-row').hidden = !orders.length;
+    $('total').textContent = inr(on.reduce(function (a, o) { return a + o.qty * o.price; }, 0), 0);
+
+    var s = session(Date.now());
+    $('timing').hidden = !orders.length;
+    $('timing-text').textContent = s.text;
+    var stale = false;
+    if (orders.length) {
+      var t = istNow(Date.now());
+      stale = t.iso > ticket.day || (t.iso === ticket.day && t.min >= 930);
+      $('stale-text').textContent = 'These orders were for ' + dayLabel(ticket.day) + ". That session has ended, so check the latest message before sending them.";
+    }
+    $('stale').hidden = !stale;
+
+    var key = getKey();
+    $('key-saved').hidden = !key;
+    $('key-form').hidden = !!key;
+    $('key-mask').textContent = key ? '••••' + key.slice(-4) : '';
+    var btn = $('send');
+    btn.disabled = !(on.length && key && s.variety);
+    btn.textContent = on.length ? 'Send ' + on.length + ' order' + (on.length > 1 ? 's' : '') + ' to Kite' : 'Send to Kite';
+    $('send-note').textContent = !key ? 'Save your Kite app key above first.'
+      : !s.variety ? s.text
+      : 'Kite opens with these orders filled in. Check them and place them there; nothing is placed until you confirm in Kite.';
+  }
+
+  $('key-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var v = $('key-input').value.trim();
+    var msg = $('key-msg');
+    if (!/^[A-Za-z0-9]{8,40}$/.test(v)) {
+      msg.textContent = 'That doesn’t look like a Kite API key: it should be 8 to 40 letters and digits, with no spaces.';
+      msg.hidden = false;
+      return;
+    }
+    memKey = v;
+    msg.textContent = store.set(v) ? '' : "This browser won't keep the key, so it's kept for this visit only.";
+    msg.hidden = !msg.textContent;
+    $('key-input').value = '';
+    render();
+  });
+  $('key-change').addEventListener('click', function () {
+    store.clear(); memKey = '';
+    render();
+    $('key-input').focus();
+  });
+
+  $('send').addEventListener('click', function () {
+    var key = getKey(), s = session(Date.now());
+    var on = orders.filter(function (o) { return o.on; });
+    if (!key || !s.variety || !on.length) return;
+    var basket = on.map(function (o) {
+      return {variety: s.variety, tradingsymbol: o.symbol, exchange: 'NSE', transaction_type: o.side, order_type: 'LIMIT',
+              quantity: o.qty, price: o.price, product: 'CNC', readonly: false, tag: 'swing'};
+    });
+    var f = document.createElement('form');
+    f.method = 'POST';
+    f.action = KITE_BASKET;
+    f.acceptCharset = 'UTF-8';
+    [['api_key', key], ['data', JSON.stringify(basket)]].forEach(function (kv) {
+      var i = document.createElement('input'); i.type = 'hidden'; i.name = kv[0]; i.value = kv[1]; f.appendChild(i);
+    });
+    document.body.appendChild(f);
+    f.submit();
+  });
+
+  // A new link opened in this same tab changes only the hash: reload so the page reads the new orders.
+  window.addEventListener('hashchange', function () { location.reload(); });
+  render();
+})();
+</script>
+</body>
+</html>
