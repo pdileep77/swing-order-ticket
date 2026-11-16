@@ -79,7 +79,7 @@ button, .btn {
 .primary { background: var(--accent); color: var(--accent-ink); width: 100%; }
 .primary:disabled { opacity: 0.45; cursor: not-allowed; }
 .quiet { background: transparent; color: var(--accent); padding: 8px 12px; }
-button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .send { display: flex; flex-direction: column; gap: 8px; }
 .send p { margin: 0; font-size: 0.85rem; color: var(--ink-soft); }
 .keybox { background: var(--slip); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
@@ -88,6 +88,14 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
 .keyrow input { flex: 1 1 12rem; min-width: 0; font: 500 0.95rem/1.2 var(--font-num); padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); color: var(--ink); }
 .addr { font: 0.8rem/1.4 var(--font-num); overflow-wrap: anywhere; user-select: all; color: var(--ink); }
 .saved { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.fill { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; padding: 0 14px 12px; }
+.fill label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.fill input { width: 100%; min-width: 0; font: 500 0.95rem/1.2 var(--font-num); padding: 9px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); color: var(--ink); }
+.copybox { background: var(--slip); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.copybox p { margin: 0; font-size: 0.85rem; color: var(--ink-soft); }
+.copybox textarea { width: 100%; min-height: 4.5rem; font: 0.85rem/1.4 var(--font-num); padding: 8px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); color: var(--ink); resize: vertical; }
+.secondary { background: transparent; color: var(--accent); width: 100%; }
+.secondary:disabled { opacity: 0.45; cursor: not-allowed; }
 footer { font-size: 0.8rem; color: var(--ink-soft); }
 footer p { margin: 0; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
@@ -133,8 +141,16 @@ footer p { margin: 0; }
     <p id="send-note">Kite opens with these orders filled in. Check them and place them there; nothing is placed until you confirm in Kite.</p>
   </section>
 
+  <section class="copybox" id="fills" aria-labelledby="fills-h" hidden>
+    <span class="label" id="fills-h">After Kite fills them</span>
+    <p>Type your fill price on each order above (Kite's Orders tab shows it), then copy the line and paste it in the Swing desk chat. Claude then keeps your record and stops at your real prices.</p>
+    <button type="button" class="secondary" id="copy" disabled>Copy for Claude</button>
+    <textarea id="copy-text" readonly hidden aria-label="The line to paste in the Swing desk chat"></textarea>
+    <p id="copy-msg" role="status" hidden></p>
+  </section>
+
   <footer>
-    <p>Your own helper page for the swing picks. Prices are limit prices; quantities follow your ₹50,000-a-stock cap, and you can change both in Kite before placing.</p>
+    <p>Your own helper page for the swing picks. Prices are limit prices; quantities follow your ₹1,65,000-a-stock cap, and you can change both in Kite before placing.</p>
   </footer>
 </main>
 
@@ -197,8 +213,9 @@ footer p { margin: 0; }
       var q = Number(o.q), p = Number(o.p);
       if (!side || !/^[A-Z0-9&-]{1,20}$/.test(sym) || !Number.isInteger(q) || q < 1 || q > 100000 ||
           !(p > 0 && p < 1000000) || Math.round(p * 100) !== Math.round(p * 100 * 1000) / 1000) return {error: true};
+      var g = Number(o.g);
       orders.push({side: side, symbol: sym, name: String(o.n || '').slice(0, 80), qty: q, price: Math.round(p * 100) / 100,
-                   why: String(o.w || '').slice(0, 200), on: true});
+                   gap: g > 0 && g < 1000000 ? Math.round(g * 100) / 100 : 0, why: String(o.w || '').slice(0, 200), on: true});
     }
     return {day: obj.d, orders: orders};
   }
@@ -206,12 +223,39 @@ footer p { margin: 0; }
   var ticket = readTicket(location.hash);
   var orders = ticket.orders || [];
 
+  // Your fills, kept in this browser per session day so they survive the trip to Kite and back.
+  var FILL_STORE = 'swingTicket.fills.', drafts = {};
+  if (ticket.day) { try { drafts = JSON.parse(localStorage.getItem(FILL_STORE + ticket.day) || '{}') || {}; } catch (e) { drafts = {}; } }
+  function saveDrafts() { try { localStorage.setItem(FILL_STORE + ticket.day, JSON.stringify(drafts)); } catch (e) {} }
+  function draftOf(o) {
+    var k = o.side + ':' + o.symbol;
+    if (!drafts[k] || typeof drafts[k] !== 'object') drafts[k] = {p: '', q: String(o.qty)};
+    return drafts[k];
+  }
+  // The line Claude reads: "Swing desk fills · Mon 17 Nov: bought SYMBOL 178 at 921.50; sold SYMBOL 46 at 3700.00".
+  function fillsLine() {
+    var parts = [];
+    orders.forEach(function (o) {
+      if (!o.on) return;
+      var d = draftOf(o);
+      var p = Number(String(d.p || '').replace(/[,\s\u20b9]/g, '')), q = Number(String(d.q || '').replace(/[,\s]/g, ''));
+      if (!(p > 0 && p < 1000000) || !Number.isInteger(q) || q < 1 || q > o.qty) return;
+      parts.push((o.side === 'BUY' ? 'bought ' : 'sold ') + o.symbol + ' ' + q + ' at ' + p.toFixed(2));
+    });
+    return parts.length ? 'Swing desk fills \u00b7 ' + dayLabel(ticket.day) + ': ' + parts.join('; ') : '';
+  }
+  function updateCopy() {
+    var line = fillsLine();
+    $('copy').disabled = !line;
+    $('copy').textContent = line ? 'Copy for Claude' : 'Copy for Claude (type a fill price first)';
+  }
+
   // Back from Kite: show what it said, then drop the query string (it can carry a one-time token this page never uses).
   var qs = new URLSearchParams(location.search);
   if (qs.has('status')) {
     var st = qs.get('status');
     $('back-text').textContent = st === 'success'
-      ? 'Back from Kite. It reported success: check the Orders tab in Kite to see what was placed.'
+      ? 'Back from Kite. It reported success: check the Orders tab in Kite to see what was placed. Once they fill, type your fill prices on the orders below and tap Copy for Claude.'
       : 'Back from Kite with status "' + st + '". Check the Orders tab in Kite to see whether anything was placed.';
     $('back').hidden = false;
     try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) {}
@@ -246,8 +290,10 @@ footer p { margin: 0; }
       inc.appendChild(box); inc.appendChild(document.createTextNode('Include'));
       top.appendChild(stamp); top.appendChild(who); top.appendChild(inc);
       var rows = document.createElement('div'); rows.className = 'rows';
-      [['Quantity', o.qty.toLocaleString('en-IN') + ' shares'], ['Limit price', inr(o.price, 2)],
-       ['Product', 'CNC (delivery)'], ['Amount, about', inr(o.qty * o.price, 0)]].forEach(function (kv) {
+      var cells = [['Quantity', o.qty.toLocaleString('en-IN') + ' shares'], ['Limit price', inr(o.price, 2)],
+                   ['Product', 'CNC (delivery)'], ['Amount, about', inr(o.qty * o.price, 0)]];
+      if (o.side === 'BUY' && o.gap) cells.push(['GTT stop after the fill', 'your fill \u2212 ' + inr(o.gap, 2)]);
+      cells.forEach(function (kv) {
         var r = document.createElement('div'); r.className = 'row';
         var l = document.createElement('span'); l.className = 'label'; l.textContent = kv[0];
         var v = document.createElement('span'); v.className = 'val'; v.textContent = kv[1];
@@ -255,6 +301,16 @@ footer p { margin: 0; }
       });
       stub.appendChild(top); stub.appendChild(rows);
       if (o.why) { var w = document.createElement('p'); w.className = 'why'; w.textContent = o.why; stub.appendChild(w); }
+      var d = draftOf(o), fill = document.createElement('div'); fill.className = 'fill';
+      [['Your fill price', 'p', o.price.toFixed(2), 'decimal'], ['Shares filled', 'q', String(o.qty), 'numeric']].forEach(function (f) {
+        var lab = document.createElement('label');
+        var t = document.createElement('span'); t.className = 'label'; t.textContent = f[0];
+        var inp = document.createElement('input'); inp.type = 'text'; inp.inputMode = f[3]; inp.autocomplete = 'off'; inp.spellcheck = false;
+        inp.id = 'fill-' + f[1] + '-' + i; inp.placeholder = f[2]; inp.value = d[f[1]] || '';
+        inp.addEventListener('input', function () { d[f[1]] = inp.value.trim(); saveDrafts(); updateCopy(); });
+        lab.appendChild(t); lab.appendChild(inp); fill.appendChild(lab);
+      });
+      stub.appendChild(fill);
       stubs.appendChild(stub);
     });
     var on = orders.filter(function (o) { return o.on; });
@@ -279,6 +335,8 @@ footer p { margin: 0; }
     var btn = $('send');
     btn.disabled = !(on.length && key && s.variety);
     btn.textContent = on.length ? 'Send ' + on.length + ' order' + (on.length > 1 ? 's' : '') + ' to Kite' : 'Send to Kite';
+    $('fills').hidden = !orders.length;
+    updateCopy();
     $('send-note').textContent = !key ? 'Save your Kite app key above first.'
       : !s.variety ? s.text
       : 'Kite opens with these orders filled in. Check them and place them there; nothing is placed until you confirm in Kite.';
@@ -322,6 +380,20 @@ footer p { margin: 0; }
     });
     document.body.appendChild(f);
     f.submit();
+  });
+
+  $('copy').addEventListener('click', function () {
+    var line = fillsLine(), box = $('copy-text'), msg = $('copy-msg');
+    if (!line) return;
+    box.value = line; box.hidden = false;
+    function say(t) { msg.textContent = t; msg.hidden = false; }
+    function fallback() {
+      box.focus(); box.select();
+      try { if (document.execCommand('copy')) { say('Copied. Paste it in the Swing desk chat.'); return; } } catch (e) {}
+      say('Select the line in the box and copy it, then paste it in the Swing desk chat.');
+    }
+    try { navigator.clipboard.writeText(line).then(function () { say('Copied. Paste it in the Swing desk chat.'); }, fallback); }
+    catch (e) { fallback(); }
   });
 
   // A new link opened in this same tab changes only the hash: reload so the page reads the new orders.
